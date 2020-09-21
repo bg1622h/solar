@@ -1,3 +1,5 @@
+{$A+,B-,D+,E+,F-,G-,I+,L+,N-,O-,P-,Q+,R+,S+,T-,V+,X+}
+{$M 16384,0,655360}
 type
 ident=(cmprog,cmif,cmthen,cmelse,cmendif,cmbegin,cmend,cmfor,cmto,cmint,
 cmtz,cmtt,cmzp,cmleft,cmright,cmup,cmdown,cmequ,
@@ -27,8 +29,9 @@ tnode=record
             );
             cmfor: (
             fori:integer; {счетчик цикла}
-            body:tpnode;
-            nz,kz:tpznach;
+            body:tpnode; {хотя так то можно}
+            add:integer;
+            nz,kz:tpznach; {начальное конечное значение}
             );
 end;
 const maxlex=25;
@@ -44,6 +47,7 @@ var f:text;
     varname:array[1..100] of string;
     numbvar:integer;
     st:string;
+    lexnum,code:integer;
 procedure readprog;{все равно потом менять}
 begin
      assign(f,'cminput.txt');
@@ -52,6 +56,7 @@ end;
 procedure error(s:string);
 begin
 writeln(s);
+halt(1);
 end;
 function getlex:ident;
 var i,code:integer;
@@ -89,14 +94,15 @@ begin
                    while (st[i] in ['0'..'9','.']) do
                          inc(i);
                    lex:=copy(st,1,i-1);
-                {   val(lex,lexnum,code);} {непойми что}
+                   val(lex,lexnum,code); {непойми что}
+                   delete(st,1,i-1);
                    getlex:=cmnumber;
                    exit;
               end;
      else begin
                if st[1] in  (['a'..'z','A'..'Z','А'..'Я','а'..'я'])
                then begin
-               while st[i] in  (['a'..'z','A'..'Z','А'..'Я','а'..'я'])  do
+               while st[i] in  (['a'..'z','A'..'Z','А'..'Я','а'..'я','_'])  do
                   inc(i); {букавки}
                lex:=copy(st,1,i-1);
                delete(st,1,i-1);
@@ -184,11 +190,50 @@ begin
 end;
 procedure operator(var last:tpnode); forward;
 procedure simoperator(var last:tpnode); forward;
+function findper:integer;
+var i:integer;
+begin
+     for i:=1 to numbvar do
+     begin
+          if (varn[i].name=lex)
+          then begin
+               findper:=i;
+               exit;
+          end;
+     end;
+end;
+procedure uslovie(var last:tpnode);
+begin
+     ch:=getlex;
+     if (ch=cmnumber)
+     then
+     begin
+     last^.op1^.f:=true;
+     last^.op1^.p:=lexnum;
+     end
+     else begin
+          last^.op1^.f:=false;
+          last^.op1^.p:=findper;
+     end;
+     ch:=getlex;
+     last^.operation:=ch;
+     ch:=getlex;
+     if (ch=cmnumber)
+     then
+     begin
+     last^.op2^.f:=true;
+     last^.op2^.p:=lexnum;
+     end
+     else begin
+          last^.op2^.f:=false;
+          last^.op2^.p:=findper;
+     end;
+end;
 procedure operif(var last:tpnode);
 var pp:tpnode;
 begin
      addelem(last,newelem(cmif));
-    { uslovie(last); {Хм}
+     uslovie(last);
      ch:=getlex;
      if ch<>cmthen
      then error('Требуется тогда');
@@ -205,7 +250,62 @@ begin
      if (ch=cmbegin) then operator(pp) else simoperator(pp);
      ch:=getlex;
      end;
-     if (ch<>Cmendif) then error('Требуется конец_если');
+     if (ch<>Cmendif) then error('Требуется конец');
+     ch:=getlex;
+end;
+procedure prisvoit;
+var i:integer;
+begin
+     for i:=1 to numbvar do
+     begin
+          if (varn[i].name=lex)
+          then begin
+               ch:=getlex;
+               varn[i].znach:=lexnum;
+               exit;
+          end;
+     end;
+     error('Нет такой переменной');
+end;
+procedure usloviefor(var last:tpnode);
+begin
+     ch:=getlex;
+     if (ch=cmnumber)
+     then begin
+          last^.nz^.f:=true;
+          last^.nz^.p:=lexnum;
+     end
+     else begin
+          last^.nz^.f:=false;
+          last^.nz^.p:=findper;
+          ch:=getlex;
+          if (ch<>cmequ) error('Требуется =');
+          ch:=getlex; {берем число}
+          prisvoit;
+     end;
+     ch:=getlex;
+     if (ch<>cmto) error('Требуется до');
+     ch:=getlex;
+     if (ch=cmnumber)
+     begin
+          last^.kz^.f:=true;
+          last^.kz^.p:=lexnum;
+     end
+     else begin
+          last^.kz^.f:=true;
+          last^.kz^.p:=findper;
+     end;
+end;
+procedure operfor(var last:tpnode);
+var pp:tpnode;
+begin
+     addelem(last,newelem(cmif));
+     usloviefor(last);
+     ch:=getlex;
+     new(last^.body);
+     pp:=last^.body;
+     if (ch=cmbegin) operator(pp)
+     else simoperator(pp);
      ch:=getlex;
 end;
 procedure operator(var last:tpnode);
@@ -215,9 +315,15 @@ begin
            if (ch=cmend) then break;
            case ch of
            cmif:operif(last);
-           end; {тупо опеараторы}
+           cmleft,cmright,cmup,cmdown:
+           cmfor:operfor(last);
+           begin
+                ch:=getlex;
+           end;
+           end; {тупо опеараторы нет тупых операторов}
            if (ch<>cmtz)
            then error('Требуется ;');
+           ch:=getlex;
      until ch=cmend;
 end;
 procedure simoperator(var last:tpnode);
@@ -240,9 +346,9 @@ begin
      then razdelvar;
      if ch=cmbegin
      then operator(last); {программа за сегодня я доложен сделать цикл }
+     error('Ну все норм');
      {writeln('Синтаксических ошибок не обнаружено');}
 end;
 begin
      main;
 end.
-{закончил на 33 слайде (без отладки)}
